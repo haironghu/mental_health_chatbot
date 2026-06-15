@@ -20,6 +20,7 @@ class AgentContext:
     history: list[dict]
     session: dict                      # 当前会话（含 k6_scores、risk_score 等）
     fsm_state: str                     # 当前 FSM 状态值
+    memory_summary: str = ""           # 较早对话的滚动摘要（Memory Agent 维护）
     # 以下字段在分析完成后由 Coordinator 填充，供 ResponseAgent 使用
     analysis: dict = field(default_factory=dict)
     alert_level: str = "green"

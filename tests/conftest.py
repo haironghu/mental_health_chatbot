@@ -44,5 +44,6 @@ def default_session():
         "k6_completed_at": None,
         "pm_strategies_used": [],
         "closure_done": False,
+        "memory_summary": "",
         "history": [],
     }

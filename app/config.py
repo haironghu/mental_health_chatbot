@@ -15,6 +15,12 @@ class Settings(BaseSettings):
     model_safety: str = ""       # 安全监测（每轮跑，便宜）
     model_k6: str = ""           # K6 评分（中档）
     model_therapist: str = ""    # 治疗师回复（质量优先）
+    model_memory: str = ""       # 对话摘要（便宜）
+
+    # 记忆 / 长会话摘要
+    memory_summary_every: int = 5        # 每隔几轮更新一次摘要
+    recent_turns_with_summary: int = 4   # 有摘要时保留嘅原始轮数
+    recent_turns_no_summary: int = 8     # 无摘要时保留嘅原始轮数（触发摘要嘅阈值）
 
     # 每个筛查维度最少对话轮数（聊够才推进到下一个维度）
     min_turns_per_screening: int = 5

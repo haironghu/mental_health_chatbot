@@ -34,6 +34,7 @@ class SafetyMonitorAgent(AnalysisAgent):
             system, messages = prompt_builder.build_safety_prompt(
                 user_message=ctx.user_message,
                 history=ctx.history,
+                memory_summary=ctx.memory_summary,
             )
             result = llm.complete_json(messages, system=system, model=self.model)
             merged = self.safe_default()

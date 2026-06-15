@@ -36,5 +36,6 @@ class TherapistAgent(ResponseAgent):
             k6_progress=ctx.k6_progress,
             pm_strategies_used=ctx.pm_strategies_used,
             remaining_strategies=ctx.remaining_strategies,
+            memory_summary=ctx.memory_summary,
         )
         return llm.complete(messages, system=system, model=self.model)

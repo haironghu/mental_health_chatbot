@@ -246,7 +246,7 @@ class TestCoordinatorRun:
 
         coord = Coordinator()
         fsm = SessionFSM(default_session)
-        result = coord.run(default_session, fsm, "你好", history=[])
+        result = coord.run(default_session, fsm, "你好")
 
         assert result.response_text == "你好呀 😊"
         # trace 应记录各 agent 的耗时
@@ -268,7 +268,7 @@ class TestCoordinatorRun:
 
         coord = Coordinator()
         fsm = SessionFSM(default_session)
-        result = coord.run(default_session, fsm, "我想死", history=[])
+        result = coord.run(default_session, fsm, "我想死")
         assert fsm.state == SessionState.CRISIS_INTERVENTION
         assert "crisis_keyword_hit" in result.trace
         # 危机时返回固定消息，不调用回复 LLM
@@ -292,7 +292,91 @@ class TestCoordinatorRun:
         default_session["state"] = "pm_stress_mgmt"
         coord = Coordinator()
         fsm = SessionFSM(default_session)
-        coord.run(default_session, fsm, "test", history=[])
+        coord.run(default_session, fsm, "test")
 
         # 不应有 K6 评分调用
         assert not any("K6 凱斯勒" in s for s in seen_systems)
+
+
+# ── MemoryAgent ──────────────────────────────────────────────────
+
+
+class TestMemoryAgent:
+    @patch("app.intelligence.llm.complete")
+    def test_summarize_returns_summary(self, mock_complete):
+        from app.agents.memory import MemoryAgent
+        mock_complete.return_value = "用戶提到學業壓力大，情緒低落。"
+        agent = MemoryAgent()
+        out = agent.summarize("", [{"role": "user", "content": "我好大壓力"}])
+        assert "學業壓力" in out
+
+    @patch("app.intelligence.llm.complete")
+    def test_empty_messages_returns_previous(self, mock_complete):
+        from app.agents.memory import MemoryAgent
+        agent = MemoryAgent()
+        out = agent.summarize("舊摘要", [])
+        assert out == "舊摘要"
+        mock_complete.assert_not_called()
+
+    @patch("app.intelligence.llm.complete")
+    def test_failure_keeps_previous(self, mock_complete):
+        from app.agents.memory import MemoryAgent
+        mock_complete.side_effect = Exception("boom")
+        agent = MemoryAgent()
+        out = agent.summarize("舊摘要", [{"role": "user", "content": "x"}])
+        assert out == "舊摘要"
+
+
+# ── Coordinator 记忆 / 历史窗口 ──────────────────────────────────
+
+
+def _history(n_turns: int) -> list[dict]:
+    """生成 n 轮（每轮 user+assistant）历史。"""
+    h = []
+    for i in range(n_turns):
+        h.append({"role": "user", "content": f"u{i}"})
+        h.append({"role": "assistant", "content": f"a{i}"})
+    return h
+
+
+class TestCoordinatorMemory:
+    def setup_method(self):
+        self.coord = Coordinator()
+
+    def test_short_history_no_summary(self, default_session):
+        # 6 轮 < 阈值（8 轮）→ 全部历史，无摘要
+        default_session["history"] = _history(6)
+        fsm = SessionFSM(default_session)
+        recent, summary = self.coord._prepare_memory(default_session, fsm, {})
+        assert len(recent) == 12
+        assert summary == ""
+
+    @patch("app.intelligence.llm.complete")
+    def test_long_history_triggers_summary(self, mock_complete, default_session):
+        mock_complete.return_value = "摘要內容"
+        # 12 轮 > 阈值 → 最近 4 轮 + 摘要
+        default_session["history"] = _history(12)
+        default_session["turn_count"] = 12
+        fsm = SessionFSM(default_session)
+        recent, summary = self.coord._prepare_memory(default_session, fsm, {})
+        assert len(recent) == settings_recent_msgs()
+        assert summary == "摘要內容"
+        # 摘要写回 session
+        assert default_session["memory_summary"] == "摘要內容"
+
+    @patch("app.intelligence.llm.complete")
+    def test_summary_reused_between_updates(self, mock_complete, default_session):
+        # 已有摘要，且 turn_count 不在更新节奏上 → 复用旧摘要，不调 LLM
+        mock_complete.return_value = "新摘要"
+        default_session["history"] = _history(12)
+        default_session["memory_summary"] = "已有摘要"
+        default_session["turn_count"] = 13  # 13 % 5 != 0
+        fsm = SessionFSM(default_session)
+        recent, summary = self.coord._prepare_memory(default_session, fsm, {})
+        assert summary == "已有摘要"
+        mock_complete.assert_not_called()
+
+
+def settings_recent_msgs():
+    from app.config import settings
+    return settings.recent_turns_with_summary * 2

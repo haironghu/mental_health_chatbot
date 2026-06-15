@@ -73,6 +73,29 @@ class TestBuildK6Prompt:
         assert "之前嘅話" in system
 
 
+class TestMemorySummaryInjection:
+    def test_summary_injected_into_triage(self):
+        system, _ = build_triage_prompt("test", history=[], memory_summary="用戶有學業壓力")
+        assert "對話摘要" in system
+        assert "用戶有學業壓力" in system
+
+    def test_no_summary_when_empty(self):
+        system, _ = build_triage_prompt("test", history=[], memory_summary="")
+        assert "對話摘要" not in system
+
+    def test_summary_injected_into_response(self):
+        system, _ = build_response_prompt(
+            state=SessionState.K6_ASSESSMENT,
+            history=[],
+            user_message="test",
+            analysis=_DEFAULT_ANALYSIS,
+            stabilize=False,
+            alert_level="green",
+            memory_summary="用戶提過孤獨感",
+        )
+        assert "用戶提過孤獨感" in system
+
+
 class TestBuildResponsePrompt:
     def test_returns_system_and_messages(self):
         system, messages = build_response_prompt(

@@ -32,6 +32,7 @@ app/
 │   ├── triage.py             # 分诊 Agent（情绪/行为信号 + 语言 + 意愿）
 │   ├── safety_monitor.py     # 安全监测 Agent（危机/自伤/自杀检测）
 │   ├── k6_scorer_agent.py    # K6 评分 Agent（仅 K6 阶段运行）
+│   ├── memory.py             # 记忆 Agent（长会话摘要，降 token）
 │   ├── therapist.py          # 治疗师 Agent（自然语言回复）
 │   └── coordinator.py        # 协调器（并行调度 + 确定性决策）
 ├── orchestrator/
@@ -53,14 +54,15 @@ app/
 tools/
 ├── k6_query.py                # 查询单用户 K6 评分
 └── k6_export.py               # 批量导出 K6 评分到 CSV
-tests/                         # 146 项单元测试
+tests/                         # 157 项单元测试
 ```
 
-## 多 Agent 架构（Phase 1-2）
+## 多 Agent 架构（Phase 1-2-4）
 
 ```
 orchestrator.process()           # 会话生命周期
    └─> Coordinator.run()         # hub-and-spoke 调度
+         ├─ Memory: 派生历史窗口（长会话用「摘要 + 最近 4 轮」）
          ├─ 并行: TriageAgent + SafetyMonitorAgent + K6ScorerAgent（仅 K6 阶段）
          ├─ 三重危机判定: Safety LLM / 确定性关键词兜底 / R(t) 红色
          ├─ 确定性: R(t) 更新 / K6 更新 / FSM 决策 / 危机强制

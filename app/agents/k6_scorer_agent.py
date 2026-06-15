@@ -31,6 +31,7 @@ class K6ScorerAgent(AnalysisAgent):
             system, messages = prompt_builder.build_k6_prompt(
                 user_message=ctx.user_message,
                 history=ctx.history,
+                memory_summary=ctx.memory_summary,
             )
             result = llm.complete_json(messages, system=system, model=self.model)
             # 只取六个维度，缺失补 0

@@ -34,34 +34,69 @@ def _render(template_name: str, **kwargs) -> str:
     return _env.get_template(template_name).render(**kwargs)
 
 
-def build_triage_prompt(user_message: str, history: list[dict]) -> tuple[str, list[dict]]:
+def _prepend_summary(system: str, memory_summary: str) -> str:
+    """非空摘要时，在 system prompt 顶部加入「之前對話摘要」块。"""
+    if memory_summary:
+        return (
+            "【之前對話摘要（較早內容，僅供參考脈絡）】\n"
+            f"{memory_summary}\n\n"
+            "---\n\n"
+            + system
+        )
+    return system
+
+
+def build_triage_prompt(
+    user_message: str, history: list[dict], memory_summary: str = ""
+) -> tuple[str, list[dict]]:
     """
-    构造分诊 Prompt（TriageAgent 用）：R(t) 信号 + 危机 + 语言 + 用户意愿。
+    构造分诊 Prompt（TriageAgent 用）：R(t) 信号 + 语言 + 用户意愿。
     返回 (system_text, messages)。
     """
     system = _render("agents/triage.jinja2", user_message=user_message, history=history)
+    system = _prepend_summary(system, memory_summary)
     messages = [{"role": "user", "content": user_message}]
     return system, messages
 
 
-def build_k6_prompt(user_message: str, history: list[dict]) -> tuple[str, list[dict]]:
+def build_k6_prompt(
+    user_message: str, history: list[dict], memory_summary: str = ""
+) -> tuple[str, list[dict]]:
     """
     构造 K6 评分 Prompt（K6ScorerAgent 用）：六维度分数。
     返回 (system_text, messages)。
     """
     system = _render("agents/k6_scoring.jinja2", user_message=user_message, history=history)
+    system = _prepend_summary(system, memory_summary)
     messages = [{"role": "user", "content": user_message}]
     return system, messages
 
 
-def build_safety_prompt(user_message: str, history: list[dict]) -> tuple[str, list[dict]]:
+def build_safety_prompt(
+    user_message: str, history: list[dict], memory_summary: str = ""
+) -> tuple[str, list[dict]]:
     """
     构造安全监测 Prompt（SafetyMonitorAgent 用）：危机检测。
     返回 (system_text, messages)。
     """
     system = _render("agents/safety_monitor.jinja2", user_message=user_message, history=history)
+    system = _prepend_summary(system, memory_summary)
     messages = [{"role": "user", "content": user_message}]
     return system, messages
+
+
+def build_memory_prompt(previous_summary: str, messages: list[dict]) -> tuple[str, list[dict]]:
+    """
+    构造摘要 Prompt（MemoryAgent 用）：压缩较早对话。
+    返回 (system_text, llm_messages)。
+    """
+    system = _render(
+        "agents/memory.jinja2",
+        previous_summary=previous_summary,
+        messages=messages,
+    )
+    llm_messages = [{"role": "user", "content": "請輸出摘要。"}]
+    return system, llm_messages
 
 
 def build_response_prompt(
@@ -76,6 +111,7 @@ def build_response_prompt(
     k6_progress: dict | None = None,
     pm_strategies_used: list[str] | None = None,
     remaining_strategies: list[str] | None = None,
+    memory_summary: str = "",
 ) -> tuple[str, list[dict]]:
     """
     构造回复 Prompt（System + Task + Safety 三层）。
@@ -112,6 +148,7 @@ def build_response_prompt(
         ),
     ]
     system = "\n\n---\n\n".join(system_parts)
+    system = _prepend_summary(system, memory_summary)
 
     # 保留最近对话历史 + 当前用户消息
     messages = list(history) + [{"role": "user", "content": user_message}]

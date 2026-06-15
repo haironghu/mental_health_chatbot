@@ -73,14 +73,12 @@ def process(phone: str, user_message: str) -> ProcessResult:
             "我哋已經傾咗好耐喇，今日嘅對話就到呢度先。有需要隨時可以返嚟！",
         )
 
-    history = session_store.recent_history(session, n_turns=8)
-
     # ── 2. 委托 Coordinator 处理（分析 + 决策 + 回复） ──────────────
+    # 历史窗口与摘要由 Coordinator 的 Memory 层从 session 派生
     result = _coordinator.run(
         session=session,
         fsm=fsm,
         user_message=user_message,
-        history=history,
     )
 
     # ── 3. 持久化 ───────────────────────────────────────────────────

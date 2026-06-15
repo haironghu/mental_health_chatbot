@@ -45,6 +45,8 @@ def _default_session() -> dict:
         # PM+ 已使用过的策略状态名（避免重复）
         "pm_strategies_used": [],
         "closure_done": False,
+        # 较早对话的滚动摘要（Memory Agent 维护，降低长会话 token 成本）
+        "memory_summary": "",
         "history": [],  # [{role: "user"|"assistant", content: "..."}]
     }
 

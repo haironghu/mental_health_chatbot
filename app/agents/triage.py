@@ -34,6 +34,7 @@ class TriageAgent(AnalysisAgent):
             system, messages = prompt_builder.build_triage_prompt(
                 user_message=ctx.user_message,
                 history=ctx.history,
+                memory_summary=ctx.memory_summary,
             )
             result = llm.complete_json(messages, system=system, model=self.model)
             # 合并到安全默认值上，保证字段齐全

@@ -19,6 +19,7 @@ from dataclasses import dataclass, field
 
 from app.agents.base import AgentContext
 from app.agents.k6_scorer_agent import K6ScorerAgent
+from app.agents.memory import MemoryAgent
 from app.agents.safety_monitor import SafetyMonitorAgent
 from app.agents.therapist import TherapistAgent
 from app.agents.triage import TriageAgent
@@ -42,6 +43,7 @@ class Coordinator:
         self.safety = SafetyMonitorAgent()
         self.k6_scorer_agent = K6ScorerAgent()
         self.therapist = TherapistAgent()
+        self.memory = MemoryAgent()
 
     # ------------------------------------------------------------------
     # 主流程
@@ -52,14 +54,18 @@ class Coordinator:
         session: dict,
         fsm: SessionFSM,
         user_message: str,
-        history: list[dict],
     ) -> CoordinatorResult:
         trace: dict = {}
+
+        # ── 0. 记忆：派生历史窗口 + 按需更新摘要 ───────────────────
+        recent_history, memory_summary = self._prepare_memory(session, fsm, trace)
+
         ctx = AgentContext(
             user_message=user_message,
-            history=history,
+            history=recent_history,
             session=session,
             fsm_state=fsm.state.value,
+            memory_summary=memory_summary,
         )
 
         # ── 1. 并行运行分析 Agent ───────────────────────────────────
@@ -121,6 +127,46 @@ class Coordinator:
             analysis=analysis,
             trace=trace,
         )
+
+    # ------------------------------------------------------------------
+    # 记忆 / 长会话摘要
+    # ------------------------------------------------------------------
+
+    def _prepare_memory(
+        self, session: dict, fsm: SessionFSM, trace: dict
+    ) -> tuple[list[dict], str]:
+        """
+        派生本轮要发送的历史窗口，并按需更新滚动摘要。
+
+        - 短会话（消息数 ≤ 阈值）：发送全部历史，无摘要
+        - 长会话：发送「最近 N 轮」原始消息 + 摘要（覆盖更早内容）
+          摘要按 memory_summary_every 节奏更新，或首次超阈值时立即生成
+        """
+        full = session.get("history", [])
+        threshold = settings.recent_turns_no_summary * 2  # 每轮 2 条消息
+
+        # 短会话：直接用全部历史，无需摘要
+        if len(full) <= threshold:
+            return list(full), session.get("memory_summary", "")
+
+        # 长会话：最近 N 轮原始 + 较早内容摘要
+        recent_n = settings.recent_turns_with_summary * 2
+        recent = full[-recent_n:]
+        older = full[:-recent_n]
+
+        prev_summary = session.get("memory_summary", "")
+        # 首次超阈值（还没摘要）或到达更新节奏 → 重新摘要
+        need_update = (not prev_summary) or (
+            fsm.turn_count % settings.memory_summary_every == 0
+        )
+        if need_update:
+            t0 = time.monotonic()
+            new_summary = self.memory.summarize(prev_summary, older)
+            trace["memory_ms"] = round((time.monotonic() - t0) * 1000)
+            session["memory_summary"] = new_summary
+            return recent, new_summary
+
+        return recent, prev_summary
 
     # ------------------------------------------------------------------
     # 并行分析
