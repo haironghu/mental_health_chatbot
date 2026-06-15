@@ -24,7 +24,7 @@ from app.agents.therapist import TherapistAgent
 from app.agents.triage import TriageAgent
 from app.config import settings
 from app.orchestrator.fsm import PM_STRATEGY_STATES, SessionFSM, SessionState
-from app.safety import crisis_keywords, k6_scorer, risk_monitor
+from app.safety import crisis_keywords, crisis_response, k6_scorer, risk_monitor
 
 logger = logging.getLogger(__name__)
 
@@ -84,15 +84,24 @@ class Coordinator:
         if kw_hit:
             trace["crisis_keyword_hit"] = crisis_keywords.matched_keywords(user_message)
 
-        # ── 5. FSM 状态决策（确定性） ───────────────────────────────
+        # ── 5. 危机：强制危机状态 + 返回固定消息（不调用 LLM 生成回复） ──
+        # 产品安全决策：危机时唔用 LLM 即兴回复，只发预审固定消息，避免担责。
         if crisis:
             fsm.force_crisis()
-        elif fsm.state == SessionState.CLOSURE:
+            trace["crisis"] = True
+            return CoordinatorResult(
+                response_text=crisis_response.CRISIS_MESSAGE,
+                analysis=analysis,
+                trace=trace,
+            )
+
+        # ── 6. 非危机：正常 FSM 决策（确定性） ──────────────────────
+        if fsm.state == SessionState.CLOSURE:
             fsm.closure_done = True
         else:
             self._advance_fsm(fsm, session, analysis)
 
-        # ── 6. 准备回复上下文 ───────────────────────────────────────
+        # ── 7. 准备回复上下文 ───────────────────────────────────────
         ctx.fsm_state = fsm.state.value
         ctx.alert_level = risk.level.value
         ctx.stabilize = risk_monitor.should_stabilize(session, risk)
@@ -102,7 +111,7 @@ class Coordinator:
         ctx.pm_strategies_used = fsm.pm_strategies_used
         ctx.remaining_strategies = _remaining_pm_strategies(fsm.pm_strategies_used)
 
-        # ── 7. 运行 TherapistAgent ──────────────────────────────────
+        # ── 8. 运行 TherapistAgent ──────────────────────────────────
         t0 = time.monotonic()
         response_text = self.therapist.respond(ctx)
         trace["therapist_ms"] = round((time.monotonic() - t0) * 1000)

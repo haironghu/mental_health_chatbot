@@ -271,6 +271,10 @@ class TestCoordinatorRun:
         result = coord.run(default_session, fsm, "我想死", history=[])
         assert fsm.state == SessionState.CRISIS_INTERVENTION
         assert "crisis_keyword_hit" in result.trace
+        # 危机时返回固定消息，不调用回复 LLM
+        from app.safety.crisis_response import CRISIS_MESSAGE
+        assert result.response_text == CRISIS_MESSAGE
+        mock_complete.assert_not_called()
 
     @patch("app.intelligence.llm.complete")
     @patch("app.intelligence.llm.complete_json")

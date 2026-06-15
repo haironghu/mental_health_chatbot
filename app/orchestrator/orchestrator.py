@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from app.agents.coordinator import Coordinator
 from app.config import settings
 from app.orchestrator.fsm import SessionFSM, SessionState
+from app.safety import crisis_response
 from app.storage import session_store
 
 logger = logging.getLogger(__name__)
@@ -46,6 +47,14 @@ def process(phone: str, user_message: str) -> ProcessResult:
         session = session_store.reset(user_hash)
 
     fsm = SessionFSM(session)
+
+    # 危机锁定：会话一旦进入危机干预，只回固定消息，不再调用任何 LLM。
+    # 仅「开始」可重置逃出（已在上面处理）。
+    if fsm.state == SessionState.CRISIS_INTERVENTION:
+        session_store.append_message(session, "user", user_message)
+        session_store.append_message(session, "assistant", crisis_response.CRISIS_MESSAGE)
+        session_store.save(user_hash, session)
+        return _make_result(session, crisis_response.CRISIS_MESSAGE)
 
     # 会话已结束，不再处理
     if fsm.is_terminal():

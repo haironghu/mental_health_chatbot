@@ -69,26 +69,67 @@ class TestProcess:
 
     @patch("app.intelligence.llm.complete")
     @patch("app.intelligence.llm.complete_json")
-    def test_crisis_detected_forces_crisis_state(self, mock_json, mock_complete, tmp_sessions_dir):
+    def test_crisis_detected_returns_fixed_message_no_llm_reply(
+        self, mock_json, mock_complete, tmp_sessions_dir
+    ):
+        from app.safety.crisis_response import CRISIS_MESSAGE
         # 危机信号由 Safety Monitor 提供
         crisis_safety = {
             "crisis_detected": True, "s_keyword": 95, "crisis_reason": "明確自殺意念",
         }
         mock_json.side_effect = _make_complete_json(safety_out=crisis_safety)
-        mock_complete.return_value = "我好擔心你，你而家安全嗎？"
+        mock_complete.return_value = "（不应被调用的 LLM 回复）"
 
         result = process("+85299990002", "我覺得好difficult")  # 不含确定性关键词，纯靠 LLM
         assert result.state == "crisis_intervention"
+        # 危机时发固定消息，不调用回复 LLM
+        assert result.response_text == CRISIS_MESSAGE
+        mock_complete.assert_not_called()
 
     @patch("app.intelligence.llm.complete")
     @patch("app.intelligence.llm.complete_json")
     def test_crisis_keyword_fallback(self, mock_json, mock_complete, tmp_sessions_dir):
-        """即使 Safety LLM 漏判，确定性关键词也应触发危机。"""
+        """即使 Safety LLM 漏判，确定性关键词也应触发危机并发固定消息。"""
+        from app.safety.crisis_response import CRISIS_MESSAGE
         mock_json.side_effect = _make_complete_json()  # safety 说无危机
-        mock_complete.return_value = "我好擔心你"
+        mock_complete.return_value = "（不应被调用）"
 
         result = process("+85299990007", "我想死")  # 命中确定性关键词
         assert result.state == "crisis_intervention"
+        assert result.response_text == CRISIS_MESSAGE
+        mock_complete.assert_not_called()
+
+    @patch("app.intelligence.llm.complete")
+    @patch("app.intelligence.llm.complete_json")
+    def test_crisis_session_locked_no_llm(self, mock_json, mock_complete, tmp_sessions_dir):
+        """会话已处于危机状态时，后续消息短路返回固定消息，零 LLM 调用。"""
+        from app.safety.crisis_response import CRISIS_MESSAGE
+        from app.storage import session_store
+        user_hash, session = session_store.get_or_create("+85299990008")
+        session["state"] = "crisis_intervention"
+        session_store.save(user_hash, session)
+
+        result = process("+85299990008", "我好啲喇")  # 即使情绪平复
+        assert result.response_text == CRISIS_MESSAGE
+        assert result.state == "crisis_intervention"  # 锁定，不恢复
+        # 完全不调用 LLM（连分析都不跑）
+        mock_json.assert_not_called()
+        mock_complete.assert_not_called()
+
+    @patch("app.intelligence.llm.complete")
+    @patch("app.intelligence.llm.complete_json")
+    def test_start_escapes_crisis_lock(self, mock_json, mock_complete, tmp_sessions_dir):
+        """危机锁定中，发「开始」可重置逃出。"""
+        from app.storage import session_store
+        user_hash, session = session_store.get_or_create("+85299990009")
+        session["state"] = "crisis_intervention"
+        session_store.save(user_hash, session)
+
+        mock_json.side_effect = _make_complete_json()
+        mock_complete.return_value = "歡迎返嚟"
+
+        result = process("+85299990009", "開始")
+        assert result.state == "k6_assessment"  # 已重置并推进
 
     @patch("app.intelligence.llm.complete")
     @patch("app.intelligence.llm.complete_json")
