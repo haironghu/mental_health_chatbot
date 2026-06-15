@@ -76,6 +76,23 @@ def query(phone: str) -> None:
             print(f"  ✓ {labels.get(s, s)}")
     else:
         print("  暂未使用过 PM+ 策略")
+    print()
+
+    # 决策审计日志
+    print("--- 决策审计日志 ---")
+    decision_log = session.get("decision_log", [])
+    if decision_log:
+        for entry in decision_log:
+            selected = entry.get("selected") or "（无后续策略）"
+            line = f"  [轮 {entry.get('turn')}] {entry.get('event','')} → {selected}"
+            if "k6_total" in entry:
+                line += f"  (K6={entry['k6_total']}/{entry.get('k6_severity','')})"
+            print(line)
+            print(f"      依据: {entry.get('reason','')}")
+            if entry.get("timestamp"):
+                print(f"      时间: {entry['timestamp']}")
+    else:
+        print("  暂无决策记录")
 
     print("=" * 50)
 

@@ -134,19 +134,20 @@ _ALL_STRATEGIES = [
 ]
 
 
-def select_next_pm_strategy(
+def select_next_pm_strategy_with_reason(
     k6_scores: dict[str, int],
     used: list[str],
-) -> Optional[str]:
+) -> tuple[Optional[str], str]:
     """
-    根据 K6 各维度分数和已使用策略，选下一个最合适嘅 PM+ 策略。
+    根据 K6 各维度分数和已使用策略，选下一个最合适嘅 PM+ 策略，
+    并返回选择依据（用于审计日志）。
 
     优先级：
       1. 按各维度分数从高到低排序，第一个对应嘅策略（如未用过）
       2. 若多个维度高分模糊 → pm_problem_solving
       3. 所有专属策略都用过 → 返回 None（结束）
 
-    返回策略状态名（如 "pm_stress_mgmt"），或 None 表示无可推荐。
+    返回 (策略状态名 或 None, 选择依据文本)。
     """
     # 按分数排序维度（高到低）
     ranked = sorted(
@@ -162,13 +163,23 @@ def select_next_pm_strategy(
             break  # 后面都是 0，没必要再看
         strategy = _DIMENSION_STRATEGY.get(dim)
         if strategy and strategy not in used:
-            return strategy
+            reason = f"K6「{K6_LABELS_ZH[dim]}」={score} 為最高且未處理 → {strategy}"
+            return strategy, reason
 
     # 第二步：如果多个维度都有非零但策略都用过，用 problem_solving 兜底
     if "pm_problem_solving" not in used:
         # 只在用户实际有困扰时才推荐解决问题
         if any(int(k6_scores.get(d, 0)) >= 2 for d in K6_DIMENSIONS):
-            return "pm_problem_solving"
+            return "pm_problem_solving", "多維度中度困擾，採用「解決問題」策略兜底"
 
     # 第三步：所有策略都用过 → 结束
-    return None
+    return None, "適用策略已全部用過，無更多推薦"
+
+
+def select_next_pm_strategy(
+    k6_scores: dict[str, int],
+    used: list[str],
+) -> Optional[str]:
+    """select_next_pm_strategy_with_reason 的薄包装，只返回策略名。"""
+    strategy, _ = select_next_pm_strategy_with_reason(k6_scores, used)
+    return strategy

@@ -47,6 +47,8 @@ def _default_session() -> dict:
         "closure_done": False,
         # 较早对话的滚动摘要（Memory Agent 维护，降低长会话 token 成本）
         "memory_summary": "",
+        # 决策审计日志（PM+ 策略选择等关键确定性决策的依据记录）
+        "decision_log": [],
         "history": [],  # [{role: "user"|"assistant", content: "..."}]
     }
 

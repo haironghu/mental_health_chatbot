@@ -45,5 +45,6 @@ def default_session():
         "pm_strategies_used": [],
         "closure_done": False,
         "memory_summary": "",
+        "decision_log": [],
         "history": [],
     }

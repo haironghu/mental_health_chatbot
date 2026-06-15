@@ -200,6 +200,38 @@ class TestCoordinatorAdvanceFSM:
         assert default_session["k6_complete"] is True
         assert default_session["k6_total"] == 10
 
+    def test_k6_completion_logs_decision(self, default_session):
+        default_session["state"] = "k6_assessment"
+        default_session["state_turn_count"] = 4
+        default_session["k6_scores"] = {
+            "tense": 3, "helpless": 2, "restless": 0,
+            "depressed": 3, "effortful": 2, "worthless": 0,
+        }
+        fsm = SessionFSM(default_session)
+        self.coord._advance_fsm(fsm, default_session, _BASE)
+        log = default_session["decision_log"]
+        assert len(log) == 1
+        assert log[0]["event"] == "k6_completed"
+        assert log[0]["selected"] is not None
+        assert log[0]["reason"]            # 非空依据
+        assert log[0]["k6_total"] == 10
+        assert "timestamp" in log[0]
+
+    def test_pm_decision_continue_logs_decision(self, default_session):
+        default_session["state"] = "pm_decision"
+        default_session["pm_strategies_used"] = ["pm_stress_mgmt"]
+        default_session["k6_scores"] = {
+            "tense": 1, "helpless": 3, "restless": 0,
+            "depressed": 3, "effortful": 2, "worthless": 0,
+        }
+        fsm = SessionFSM(default_session)
+        analysis = {**_BASE, "wants_to_continue": True}
+        self.coord._advance_fsm(fsm, default_session, analysis)
+        log = default_session["decision_log"]
+        assert len(log) == 1
+        assert log[0]["event"] == "pm_strategy_selected"
+        assert log[0]["selected"] == "pm_behavioral_activation"
+
     def test_pm_strategy_to_decision(self, default_session):
         from app.config import settings
         default_session["state"] = "pm_stress_mgmt"

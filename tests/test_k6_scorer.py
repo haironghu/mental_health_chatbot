@@ -168,3 +168,20 @@ class TestSelectNextPMStrategy:
         scores = {dim: 0 for dim in K6_DIMENSIONS}
         result = select_next_pm_strategy(scores, used=[])
         assert result is None
+
+
+class TestSelectStrategyWithReason:
+    def test_returns_strategy_and_reason(self):
+        from app.safety.k6_scorer import select_next_pm_strategy_with_reason
+        scores = {"tense": 4, "helpless": 1, "restless": 0,
+                  "depressed": 1, "effortful": 0, "worthless": 0}
+        strategy, reason = select_next_pm_strategy_with_reason(scores, used=[])
+        assert strategy == "pm_stress_mgmt"
+        assert "緊張" in reason  # 依据提到最高维度
+
+    def test_none_has_reason(self):
+        from app.safety.k6_scorer import select_next_pm_strategy_with_reason
+        scores = {dim: 0 for dim in K6_DIMENSIONS}
+        strategy, reason = select_next_pm_strategy_with_reason(scores, used=[])
+        assert strategy is None
+        assert reason

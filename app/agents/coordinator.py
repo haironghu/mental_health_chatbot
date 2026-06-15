@@ -16,6 +16,7 @@ import logging
 import time
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
+from datetime import datetime
 
 from app.agents.base import AgentContext
 from app.agents.k6_scorer_agent import K6ScorerAgent
@@ -224,8 +225,13 @@ class Coordinator:
             result = k6_scorer.evaluate(session, fsm.state_turn_count + 1)
             if result.complete:
                 k6_scorer.mark_complete(session, result)
-                next_strategy = k6_scorer.select_next_pm_strategy(
+                next_strategy, reason = k6_scorer.select_next_pm_strategy_with_reason(
                     result.scores, fsm.pm_strategies_used
+                )
+                _log_decision(
+                    session, fsm, event="k6_completed",
+                    selected=next_strategy, reason=reason, k6=result.scores,
+                    total=result.total, severity=result.severity,
                 )
                 if next_strategy:
                     target = SessionState(next_strategy)
@@ -256,8 +262,12 @@ class Coordinator:
                 return
             if wants_continue is True:
                 k6_scores = session.get("k6_scores", {})
-                next_strategy = k6_scorer.select_next_pm_strategy(
+                next_strategy, reason = k6_scorer.select_next_pm_strategy_with_reason(
                     k6_scores, fsm.pm_strategies_used
+                )
+                _log_decision(
+                    session, fsm, event="pm_strategy_selected",
+                    selected=next_strategy, reason=reason, k6=k6_scores,
                 )
                 if next_strategy:
                     target = SessionState(next_strategy)
@@ -273,8 +283,38 @@ class Coordinator:
 
 
 # ────────────────────────────────────────────────────────────────
-# 辅助函数（从 orchestrator 迁移）
+# 辅助函数
 # ────────────────────────────────────────────────────────────────
+
+
+def _log_decision(
+    session: dict,
+    fsm: SessionFSM,
+    *,
+    event: str,
+    selected: str | None,
+    reason: str,
+    k6: dict,
+    total: int | None = None,
+    severity: str | None = None,
+) -> None:
+    """
+    记录一条确定性决策到审计日志（session["decision_log"]）。
+    用于复盘 / 合规：每次 PM+ 策略选择都留下「当时 K6 分数 + 选择 + 依据」。
+    """
+    entry: dict = {
+        "turn": fsm.turn_count,
+        "event": event,
+        "selected": selected,
+        "reason": reason,
+        "k6_scores": dict(k6),
+        "timestamp": datetime.now().isoformat(timespec="seconds"),
+    }
+    if total is not None:
+        entry["k6_total"] = total
+    if severity is not None:
+        entry["k6_severity"] = severity
+    session.setdefault("decision_log", []).append(entry)
 
 
 def _build_k6_progress(session: dict, fsm: SessionFSM) -> dict:
