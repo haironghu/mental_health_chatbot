@@ -1,0 +1,30 @@
+# 密钥与凭证（绝对不可提交）
+.env
+*.sqlite3
+*.sqlite3-journal
+*.sqlite3-wal
+*.sqlite3-shm
+
+# 用户数据（隐私）
+data/sessions/
+data/*.csv
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+
+# 专有文档 / 临时文件
+docs/*.docx
+temp_docx/
+*.txt
+
+# 编辑器 / 系统
+.DS_Store
+.claude/
+.idea/
+.vscode/

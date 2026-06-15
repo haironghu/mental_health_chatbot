@@ -1,0 +1,119 @@
+# 多 Agent 架构设计
+
+本文档描述从当前「单 LLM 调用」版本演进到多 Agent 架构的设计与路线图。
+
+## 设计原则
+
+**FSM 仍是确定性的「大脑」，Agents 是它的「专家」。**
+
+- Agents 之间**不互相决策**，各自只负责擅长的事，由 Coordinator（协调器）统一调度
+- 心理健康产品必须**可预测**，避免多 Agent 自由对话导致失控
+- 危机干预流程**不可被 LLM 自由意志绕过**
+- 出问题时能快速定位是哪个 Agent 出错
+
+## Agent 划分
+
+| Agent | 职责 | 触发时机 | 模型档位 |
+|---|---|---|---|
+| **Triage 分诊** | 提取 R(t) 信号（s_emotion / s_keyword / s_behavior）+ 语言检测 | 每轮 | 便宜（Haiku / Flash Lite） |
+| **Safety Monitor 安全监控** | 独立检测自伤/自杀/危机意念 | 每轮（并行） | 便宜 + 特化 |
+| **Boundary 边界守护** | 偏题 / 药物咨询 / 技术支持等分类 | 每轮（并行） | 便宜 |
+| **K6 Scorer 评估** | 根据对话推断 K6 六维度分数 | 仅 K6_ASSESSMENT 状态 | 中（Haiku / Sonnet） |
+| **Strategy Selector 策略选择** | K6 完成后选 PM+ 策略 + 给出可审计的推荐理由 | 一次性，K6 完成时 | 中 |
+| **Therapist 治疗师** | 自然语言回复 | 每轮 | 好（Sonnet / Opus） |
+| **Memory 记忆** | 摘要长对话历史，减少上下文 | 每 N 轮一次 | 便宜 |
+
+## 处理流程（并行 + 串行）
+
+```
+用户消息
+  ↓
+┌──────────────────────────────────┐
+│  并行调用（< 1s）：               │
+│   - Triage                        │
+│   - Safety Monitor                │
+│   - Boundary                      │
+│   - K6 Scorer（仅 K6 阶段）       │
+└──────────────────────────────────┘
+  ↓
+确定性逻辑（Coordinator）：
+  - 更新 R(t)、K6 分数
+  - FSM 决定下一状态
+  - K6 完成 → 调用 Strategy Selector
+  ↓
+串行调用：
+  - Therapist（生成回复）
+  ↓
+（可选）回复后安全复审
+  ↓
+发送给用户
+```
+
+并行的分诊/打分任务跑得快又便宜，真正花钱的只有 Therapist。
+
+## 通信模式：Hub-and-spoke
+
+Agents 之间不直接通信，全部通过 Coordinator 中转。
+
+```python
+class Coordinator:
+    def process(self, user_msg):
+        signals = parallel_call([triage, safety, boundary, k6_scorer])
+        self.fsm.update(signals)          # 确定性
+        if signals.crisis_detected:
+            self.fsm.force_crisis()
+        response = therapist.generate(self.fsm.state, signals)
+        return response
+```
+
+理由：可预测、易测试、好排查。不采用 agent-to-agent（如 CrewAI 风格）的自由对话——不应让 Triage Agent「决定」是否调用 Crisis Counselor。
+
+## 成本与延迟优化
+
+| 优化 | 收益 |
+|---|---|
+| Triage / Safety / Boundary 用 Haiku / Flash Lite | 成本几乎可忽略 |
+| Therapist 按严重度切换档位（mild 用 Haiku，severe 用 Sonnet） | 30-50% 总成本 |
+| Memory Agent 每 5 轮跑一次并缓存摘要 | 大幅减少 Therapist 上下文 |
+| 危机时跳过其他 Agent，直接调 Crisis Therapist | 危机响应延迟 < 1s |
+
+预期每轮 3-4 次 LLM 调用（当前 2 次），总成本约 1.5-2x，质量明显提升。
+
+## 框架选择
+
+| 选项 | 评价 |
+|---|---|
+| **自研**（在现有 orchestrator 上扩展） | 推荐，FSM / Prompt / Session 都现成 |
+| Claude Agent SDK | 可选，官方支持，原生工具调用 |
+| LangGraph | 适合复杂图状流转，对当前 FSM 偏重 |
+| CrewAI | 不推荐，鼓励自由对话，违背确定性原则 |
+
+## 分阶段路线图
+
+不要一次推翻，建议按以下顺序，每阶段独立可发布：
+
+```
+现状：Analysis（混合）+ Response（混合）
+        ↓
+Phase 1：拆出 Triage + K6 Scorer（把 Analysis 拆开）
+        ↓
+Phase 2：加 Safety Monitor（并行运行）
+        ↓
+Phase 3：Therapist 按状态拆成多个专家
+        （k6_interview / stress / problem / activation / social / crisis / closure）
+        ↓
+Phase 4：加 Memory Agent（处理长会话）
+        ↓
+Phase 5：加 Strategy Selector，记录每次策略决策理由（可审计）
+```
+
+## 可观测性（必做）
+
+多 Agent 最大的坑是「哪里出错了不知道」。需要：
+
+1. **Trace ID**：每条用户消息生成一个 trace_id，所有 Agent 调用挂在该 trace 下
+2. **每个 Agent 的日志**：输入 / 输出 / 延迟 / 成本
+3. **决策日志**：FSM 状态变化、策略选择、危机触发，全部记录原因
+4. **简单 dashboard**：按用户 hash 查看完整对话流（Agent 调用图）
+
+不做这一层，多 Agent 几乎无法调试。

@@ -1,0 +1,42 @@
+from pydantic_settings import BaseSettings
+
+
+class Settings(BaseSettings):
+    # OpenRouter
+    openrouter_api_key: str
+    openrouter_base_url: str = "https://openrouter.ai/api/v1"
+    openrouter_model: str = "google/gemini-3.1-flash-lite"
+    llm_max_tokens: int = 1024
+    llm_temperature: float = 0.7
+
+    # 每个筛查维度最少对话轮数（聊够才推进到下一个维度）
+    min_turns_per_screening: int = 5
+
+    # 消息防抖：收到消息后等待几秒，若期间有新消息则重置计时（让用户讲完）
+    debounce_seconds: float = 3.0
+
+    # 模拟打字：每个字符多少秒（如0.05秒/字 = 100字需要5秒）
+    typing_seconds_per_char: float = 0.04
+    # 单段最大延迟（避免过长消息让用户等太久）
+    max_typing_delay_seconds: float = 4.0
+    # 段间最小延迟
+    min_typing_delay_seconds: float = 0.8
+
+    # WhatsApp (neonize)
+    whatsapp_db: str = "whatsapp_session.sqlite3"
+
+    # 风险评分系数 R(t) = α×R(t-1) + β×S_emotion + γ×S_keyword + δ×S_behavior
+    risk_alpha: float = 0.6
+    risk_beta: float = 0.25
+    risk_gamma: float = 0.3
+    risk_delta: float = 0.15
+
+    # 会话限制
+    max_turns: int = 30
+
+    class Config:
+        env_file = ".env"
+        case_sensitive = False
+
+
+settings = Settings()
