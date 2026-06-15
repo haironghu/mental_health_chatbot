@@ -1,6 +1,11 @@
 # 多 Agent 架构设计
 
-本文档描述从当前「单 LLM 调用」版本演进到多 Agent 架构的设计与路线图。
+本文档记录从「单 LLM 调用」版本演进到多 Agent 架构的**设计原则、关键决策与实现**。
+
+> **实现状态**：架构已落地。Phase 1 / 2 / 4 / 5 完成，Phase 3 评估后跳过（见路线图）。
+> 下文「设计原则 / Agent 划分 / 处理流程」为最初提案，其中部分构想在实现时做了调整
+> （Boundary 并入 system prompt、Strategy Selector 改为确定性+审计日志、Therapist 不按严重度切换）；
+> **真实落地状态以「分阶段路线图」及各「Phase X 已实现」小节为准。**
 
 ## 设计原则
 
@@ -13,43 +18,46 @@
 
 ## Agent 划分
 
-| Agent | 职责 | 触发时机 | 模型档位 |
-|---|---|---|---|
-| **Triage 分诊** | 提取 R(t) 信号（s_emotion / s_keyword / s_behavior）+ 语言检测 | 每轮 | 便宜（Haiku / Flash Lite） |
-| **Safety Monitor 安全监控** | 独立检测自伤/自杀/危机意念 | 每轮（并行） | 便宜 + 特化 |
-| **Boundary 边界守护** | 偏题 / 药物咨询 / 技术支持等分类 | 每轮（并行） | 便宜 |
-| **K6 Scorer 评估** | 根据对话推断 K6 六维度分数 | 仅 K6_ASSESSMENT 状态 | 中（Haiku / Sonnet） |
-| **Strategy Selector 策略选择** | K6 完成后选 PM+ 策略 + 给出可审计的推荐理由 | 一次性，K6 完成时 | 中 |
-| **Therapist 治疗师** | 自然语言回复 | 每轮 | 好（Sonnet / Opus） |
-| **Memory 记忆** | 摘要长对话历史，减少上下文 | 每 N 轮一次 | 便宜 |
+下表为最初构想；「实现」列标注落地情况。
+
+| Agent | 职责 | 触发时机 | 模型档位 | 实现 |
+|---|---|---|---|---|
+| **Triage 分诊** | 提取 R(t) 信号（s_emotion / s_behavior）+ 语言 + 意愿 | 每轮 | 便宜 | ✅ |
+| **Safety Monitor 安全监控** | 独立检测自伤/自杀/危机意念（含 s_keyword） | 每轮（并行） | 便宜 | ✅ |
+| **K6 Scorer 评估** | 根据对话推断 K6 六维度分数 | 仅 K6_ASSESSMENT 状态 | 中 | ✅ |
+| **Memory 记忆** | 摘要长对话历史，减少上下文 | 每 N 轮一次 | 便宜 | ✅ |
+| **Therapist 治疗师** | 自然语言回复 | 每轮（危机时跳过） | 质量优先 | ✅ |
+| **Boundary 边界守护** | 偏题 / 药物咨询引导 | — | — | ⛔ 并入 system prompt，未独立成 agent |
+| **Strategy Selector 策略选择** | K6 完成后选 PM+ 策略 + 推荐理由 | — | — | ⛔ 改为确定性规则 + 审计日志（Phase 5） |
 
 ## 处理流程（并行 + 串行）
+
+实际落地的流程（与下方各「已实现」小节一致）：
 
 ```
 用户消息
   ↓
+Memory：派生历史窗口（长会话用「摘要 + 最近 4 轮」）
+  ↓
 ┌──────────────────────────────────┐
-│  并行调用（< 1s）：               │
+│  并行调用：                       │
 │   - Triage                        │
 │   - Safety Monitor                │
-│   - Boundary                      │
 │   - K6 Scorer（仅 K6 阶段）       │
 └──────────────────────────────────┘
   ↓
 确定性逻辑（Coordinator）：
   - 更新 R(t)、K6 分数
-  - FSM 决定下一状态
-  - K6 完成 → 调用 Strategy Selector
+  - 三重危机判定（命中 → 强制危机 + 发固定消息，跳过 Therapist）
+  - FSM 决定下一状态；K6 完成 / 续选策略时按规则选 PM+ 策略并记审计日志
   ↓
 串行调用：
-  - Therapist（生成回复）
-  ↓
-（可选）回复后安全复审
+  - Therapist（生成回复，非危机时）
   ↓
 发送给用户
 ```
 
-并行的分诊/打分任务跑得快又便宜，真正花钱的只有 Therapist。
+并行的分诊/安全/打分任务跑得快又便宜，真正花钱的只有 Therapist。
 
 ## 通信模式：Hub-and-spoke
 
@@ -57,27 +65,31 @@ Agents 之间不直接通信，全部通过 Coordinator 中转。
 
 ```python
 class Coordinator:
-    def process(self, user_msg):
-        signals = parallel_call([triage, safety, boundary, k6_scorer])
-        self.fsm.update(signals)          # 确定性
-        if signals.crisis_detected:
-            self.fsm.force_crisis()
-        response = therapist.generate(self.fsm.state, signals)
-        return response
+    def run(self, session, fsm, user_msg):
+        recent, summary = self._prepare_memory(session, fsm)      # Memory
+        signals = parallel_call([triage, safety, k6_scorer])      # 并行分析
+        self._update_risk_and_k6(session, signals)                # 确定性
+        if crisis_detected(signals, user_msg, risk):              # 三重判定
+            fsm.force_crisis()
+            return CRISIS_MESSAGE                                 # 固定消息，跳过 LLM
+        self._advance_fsm(fsm, session, signals)                  # 含策略选择+审计
+        return therapist.respond(...)
 ```
 
-理由：可预测、易测试、好排查。不采用 agent-to-agent（如 CrewAI 风格）的自由对话——不应让 Triage Agent「决定」是否调用 Crisis Counselor。
+理由：可预测、易测试、好排查。不采用 agent-to-agent（如 CrewAI 风格）的自由对话——不应让 Triage Agent「决定」是否调用危机流程。
 
 ## 成本与延迟优化
 
-| 优化 | 收益 |
-|---|---|
-| Triage / Safety / Boundary 用 Haiku / Flash Lite | 成本几乎可忽略 |
-| Therapist 按严重度切换档位（mild 用 Haiku，severe 用 Sonnet） | 30-50% 总成本 |
-| Memory Agent 每 5 轮跑一次并缓存摘要 | 大幅减少 Therapist 上下文 |
-| 危机时跳过其他 Agent，直接调 Crisis Therapist | 危机响应延迟 < 1s |
+| 优化 | 收益 | 实现 |
+|---|---|---|
+| Triage / Safety / K6 用便宜模型 | 成本几乎可忽略 | ✅ 各 agent 模型档位可配 |
+| Memory Agent 每 5 轮跑一次并缓存摘要 | 大幅减少每轮上下文 | ✅ |
+| 危机时跳过 Therapist，直接发固定消息 | 危机响应延迟低、零生成成本 | ✅ |
+| K6 仅评估阶段运行 | 其他阶段省一次 LLM 调用 | ✅ |
+| Therapist 按严重度切换模型档位 | 进一步降本 | ⛔ 未实现（可后续加） |
 
-预期每轮 3-4 次 LLM 调用（当前 2 次），总成本约 1.5-2x，质量明显提升。
+每轮 LLM 调用：非 K6 阶段 3 次（triage + safety + therapist），K6 阶段 4 次，
+每 5 轮额外一次 memory；危机时仅 triage + safety（回复用固定消息，不调生成）。
 
 ## 框架选择
 
