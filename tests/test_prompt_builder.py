@@ -1,5 +1,9 @@
 """Prompt 组装器测试。"""
-from app.intelligence.prompt_builder import build_analysis_prompt, build_response_prompt
+from app.intelligence.prompt_builder import (
+    build_k6_prompt,
+    build_response_prompt,
+    build_triage_prompt,
+)
 from app.orchestrator.fsm import SessionState
 
 
@@ -15,9 +19,9 @@ _DEFAULT_ANALYSIS = {
 }
 
 
-class TestBuildAnalysisPrompt:
+class TestBuildTriagePrompt:
     def test_returns_system_and_messages(self):
-        system, messages = build_analysis_prompt(
+        system, messages = build_triage_prompt(
             user_message="我最近好唔開心",
             history=[],
         )
@@ -27,30 +31,46 @@ class TestBuildAnalysisPrompt:
         assert messages[0]["role"] == "user"
         assert messages[0]["content"] == "我最近好唔開心"
 
-    def test_system_contains_analysis_instructions(self):
-        system, _ = build_analysis_prompt("test", history=[])
+    def test_system_contains_triage_signals(self):
+        system, _ = build_triage_prompt("test", history=[])
         assert "s_emotion" in system
         assert "s_keyword" in system
         assert "s_behavior" in system
-        assert "JSON" in system
-
-    def test_system_contains_k6_instructions(self):
-        system, _ = build_analysis_prompt("test", history=[])
-        assert "k6_dim_scores" in system
-        assert "tense" in system
-        assert "worthless" in system
-
-    def test_system_contains_wants_to_continue(self):
-        system, _ = build_analysis_prompt("test", history=[])
+        assert "crisis_detected" in system
         assert "wants_to_continue" in system
 
-    def test_history_included_in_system(self):
+    def test_triage_does_not_contain_k6(self):
+        # 分诊 prompt 不应包含 K6 评分细节（已拆分）
+        system, _ = build_triage_prompt("test", history=[])
+        assert "k6_dim_scores" not in system
+
+    def test_history_included(self):
         history = [
             {"role": "user", "content": "你好"},
             {"role": "assistant", "content": "嗨！"},
         ]
-        system, _ = build_analysis_prompt("第二句", history=history)
+        system, _ = build_triage_prompt("第二句", history=history)
         assert "你好" in system
+
+
+class TestBuildK6Prompt:
+    def test_returns_system_and_messages(self):
+        system, messages = build_k6_prompt("我覺得好攰", history=[])
+        assert isinstance(system, str)
+        assert len(messages) == 1
+        assert messages[0]["content"] == "我覺得好攰"
+
+    def test_system_contains_k6_dimensions(self):
+        system, _ = build_k6_prompt("test", history=[])
+        assert "tense" in system
+        assert "helpless" in system
+        assert "worthless" in system
+        assert "K6" in system
+
+    def test_history_included(self):
+        history = [{"role": "user", "content": "之前嘅話"}]
+        system, _ = build_k6_prompt("新話", history=history)
+        assert "之前嘅話" in system
 
 
 class TestBuildResponsePrompt:

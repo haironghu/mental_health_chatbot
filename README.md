@@ -27,11 +27,17 @@
 ```
 app/
 ├── config.py                  # 配置（pydantic-settings）
+├── agents/                    # ★ 多 Agent 架构（Phase 1）
+│   ├── base.py                # Agent 基类 + AgentContext
+│   ├── triage.py             # 分诊 Agent（R(t) 信号 + 危机 + 语言 + 意愿）
+│   ├── k6_scorer_agent.py    # K6 评分 Agent（仅 K6 阶段运行）
+│   ├── therapist.py          # 治疗师 Agent（自然语言回复）
+│   └── coordinator.py        # 协调器（并行调度 + 确定性决策）
 ├── orchestrator/
 │   ├── fsm.py                 # 有限状态机（WELCOME→K6→PM+→CLOSURE）
-│   └── orchestrator.py        # 主流水线
+│   └── orchestrator.py        # 会话生命周期（委托 Coordinator）
 ├── intelligence/
-│   ├── llm.py                 # OpenRouter API 封装
+│   ├── llm.py                 # OpenRouter API 封装（支持按 agent 选模型）
 │   └── prompt_builder.py      # 多层 Prompt 组装（System+Task+Safety）
 ├── safety/
 │   ├── k6_scorer.py           # K6 评分器 + PM+ 策略选择
@@ -42,11 +48,24 @@ app/
 │   ├── client.py              # neonize 客户端（QR 登录、收发消息）
 │   └── debouncer.py           # 消息防抖（合并连续短消息）
 └── prompts/                   # Jinja2 模板（粤语为主）
+    └── agents/                # 各 Agent 的 prompt（triage / k6_scoring）
 tools/
 ├── k6_query.py                # 查询单用户 K6 评分
 └── k6_export.py               # 批量导出 K6 评分到 CSV
-tests/                         # 132 项单元测试
+tests/                         # 137 项单元测试
 ```
+
+## 多 Agent 架构（Phase 1）
+
+```
+orchestrator.process()           # 会话生命周期
+   └─> Coordinator.run()         # hub-and-spoke 调度
+         ├─ 并行: TriageAgent + K6ScorerAgent（仅 K6 阶段）
+         ├─ 确定性: R(t) 更新 / K6 更新 / FSM 决策 / 危机强制
+         └─ TherapistAgent（生成回复）
+```
+
+设计原则、各 Agent 职责、后续 Phase 2-5 路线图详见 [docs/MULTI_AGENT_DESIGN.md](docs/MULTI_AGENT_DESIGN.md)。
 
 ## 快速开始
 

@@ -95,7 +95,7 @@ class Coordinator:
 ```
 现状：Analysis（混合）+ Response（混合）
         ↓
-Phase 1：拆出 Triage + K6 Scorer（把 Analysis 拆开）
+Phase 1 ✅：拆出 Triage + K6 Scorer（把 Analysis 拆开），建立 Agent 框架 + Coordinator
         ↓
 Phase 2：加 Safety Monitor（并行运行）
         ↓
@@ -106,6 +106,23 @@ Phase 4：加 Memory Agent（处理长会话）
         ↓
 Phase 5：加 Strategy Selector，记录每次策略决策理由（可审计）
 ```
+
+### Phase 1 已实现（当前代码）
+
+```
+app/agents/
+├── base.py              # Agent / AnalysisAgent / ResponseAgent 基类 + AgentContext
+├── triage.py           # TriageAgent（每轮，R(t)信号+危机+语言+意愿，便宜模型）
+├── k6_scorer_agent.py  # K6ScorerAgent（仅 K6 阶段，六维度评分，中档模型）
+├── therapist.py        # TherapistAgent（每轮，自然语言回复，质量优先）
+└── coordinator.py      # Coordinator（并行调度 + 确定性决策 + 回复）
+```
+
+- 分析 Agent 通过 `ThreadPoolExecutor` 并行运行
+- K6ScorerAgent 仅在 K6_ASSESSMENT 状态运行，省成本
+- 每个 Agent 失败时返回安全默认值，不拖垮流水线
+- Coordinator 输出 `trace`（各 Agent 耗时），写入日志供观测
+- 各 Agent 模型档位可在 `.env` 配置（MODEL_TRIAGE / MODEL_K6 / MODEL_THERAPIST）
 
 ## 可观测性（必做）
 

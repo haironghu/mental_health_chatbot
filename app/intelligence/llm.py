@@ -15,12 +15,18 @@ _client = OpenAI(
 )
 
 
-def complete(messages: list[dict], *, system: str = "") -> str:
+def _resolve_model(model: str | None) -> str:
+    """None 时回退到默认模型，支持不同 agent 使用不同模型档位。"""
+    return model or settings.openrouter_model
+
+
+def complete(messages: list[dict], *, system: str = "", model: str | None = None) -> str:
     """
     调用 LLM 并返回文本回复。
 
     messages 格式：[{"role": "user"|"assistant", "content": "..."}]
     system   若非空则作为 system message 前置。
+    model    指定模型档位，None 则用 settings.openrouter_model。
     """
     full_messages: list[dict] = []
     if system:
@@ -28,7 +34,7 @@ def complete(messages: list[dict], *, system: str = "") -> str:
     full_messages.extend(messages)
 
     response = _client.chat.completions.create(
-        model=settings.openrouter_model,
+        model=_resolve_model(model),
         messages=full_messages,
         max_tokens=settings.llm_max_tokens,
         temperature=settings.llm_temperature,
@@ -36,10 +42,11 @@ def complete(messages: list[dict], *, system: str = "") -> str:
     return response.choices[0].message.content
 
 
-def complete_json(messages: list[dict], *, system: str = "") -> dict:
+def complete_json(messages: list[dict], *, system: str = "", model: str | None = None) -> dict:
     """
     调用 LLM 并强制返回 JSON。
     通过 response_format 请求 JSON 输出，并做安全解析。
+    model 指定模型档位，None 则用 settings.openrouter_model。
     """
     full_messages: list[dict] = []
     if system:
@@ -47,7 +54,7 @@ def complete_json(messages: list[dict], *, system: str = "") -> dict:
     full_messages.extend(messages)
 
     response = _client.chat.completions.create(
-        model=settings.openrouter_model,
+        model=_resolve_model(model),
         messages=full_messages,
         max_tokens=settings.llm_max_tokens,
         temperature=settings.llm_temperature,

@@ -34,14 +34,22 @@ def _render(template_name: str, **kwargs) -> str:
     return _env.get_template(template_name).render(**kwargs)
 
 
-def build_analysis_prompt(user_message: str, history: list[dict]) -> tuple[str, list[dict]]:
+def build_triage_prompt(user_message: str, history: list[dict]) -> tuple[str, list[dict]]:
     """
-    构造分析 Prompt（让 Claude 输出结构化 JSON）。
+    构造分诊 Prompt（TriageAgent 用）：R(t) 信号 + 危机 + 语言 + 用户意愿。
     返回 (system_text, messages)。
     """
-    system = _render("system.jinja2") + "\n\n" + _render("analysis.jinja2",
-                                                           user_message=user_message,
-                                                           history=history)
+    system = _render("agents/triage.jinja2", user_message=user_message, history=history)
+    messages = [{"role": "user", "content": user_message}]
+    return system, messages
+
+
+def build_k6_prompt(user_message: str, history: list[dict]) -> tuple[str, list[dict]]:
+    """
+    构造 K6 评分 Prompt（K6ScorerAgent 用）：六维度分数。
+    返回 (system_text, messages)。
+    """
+    system = _render("agents/k6_scoring.jinja2", user_message=user_message, history=history)
     messages = [{"role": "user", "content": user_message}]
     return system, messages
 

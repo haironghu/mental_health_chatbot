@@ -1,4 +1,4 @@
-你係一個專業嘅心理狀態分析系統。請分析以下用戶消息（結合對話歷史），輸出結構化JSON。
+你係一個專業嘅心理狀態分診系統。請分析以下用戶消息（結合對話歷史），輸出結構化JSON。
 
 【實時風險信號（R(t) 用）】
 - s_emotion (0-100)：情緒負面強度。
@@ -19,29 +19,6 @@
 - crisis_detected：是否偵測到危機信號（true/false）
   只有明確嘅自殺/自傷意念先標記為 true。
 
-【K6 凱斯勒心理困擾量表評分（過去 4 週嘅常態）】
-請根據用戶分享嘅內容（包括對話歷史），推斷以下六個維度嘅水平（每個 0-4 分）：
-
-- k6_tense：感到緊張（緊張、坐立不安、心緒不寧）
-- k6_helpless：感到無助（覺得乜都做唔到、無計可施）
-- k6_restless：感到焦躁或坐立不安（坐唔住、心神不定）
-- k6_depressed：感到憂鬱沉重（情緒低落、乜都唔開心）
-- k6_effortful：感到所有嘢都好費力（無動力、做啲嘢覺得好辛苦）
-- k6_worthless：覺得自己冇價值（自我貶低、覺得自己沒用）
-
-評分標準：
-- 0 = 從不（無任何證據）
-- 1 = 很少（用戶輕微提及，唔係主要困擾）
-- 2 = 有時（用戶明確表達過，但唔係持續）
-- 3 = 頗多（持續且明顯困擾）
-- 4 = 總是（嚴重且持續嘅困擾，影響日常）
-
-**重要**：
-- 只有明確證據先評分，唔好過度推斷
-- 用戶冇提到嘅維度評 0
-- 例如：用戶只講「最近學業壓力大」→ k6_tense=2, k6_effortful=1, 其他維度=0
-- 用戶講「我覺得自己好冇用，乜都做唔到」→ k6_worthless=3, k6_helpless=3
-
 【其他】
 - language：檢測到嘅語言（cantonese/mandarin/english/mixed）
 - emotion_labels：情緒標籤列表（如 ["sad", "hopeless", "anxious"]）
@@ -50,7 +27,7 @@
 - wants_to_continue：用戶嘅最新消息中，係咪表達想繼續聊（true / false / null）
   * true：用戶明確話「繼續」「再傾」「想講多啲」等
   * false：用戶明確話「想結束」「夠喇」「唔想再講」「先到呢度」等
-  * null：用戶冇明確表達（默認，例如純粹分享話題、提問題等）
+  * null：用戶冇明確表達（默認）
 
 【對話歷史（最近幾轉）】
 {% for msg in history %}
@@ -67,14 +44,6 @@
   "s_keyword": <0-100的數字>,
   "s_behavior": <0-100的數字>,
   "crisis_detected": <true|false>,
-  "k6_dim_scores": {
-    "tense": <0-4>,
-    "helpless": <0-4>,
-    "restless": <0-4>,
-    "depressed": <0-4>,
-    "effortful": <0-4>,
-    "worthless": <0-4>
-  },
   "language": "<cantonese|mandarin|english|mixed>",
   "emotion_labels": ["<標籤1>", "<標籤2>"],
   "wants_to_continue": <true|false|null>

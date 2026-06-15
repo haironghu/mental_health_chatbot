@@ -9,6 +9,12 @@ class Settings(BaseSettings):
     llm_max_tokens: int = 1024
     llm_temperature: float = 0.7
 
+    # 各 Agent 的模型档位（留空则回退 openrouter_model）
+    # 建议：triage/k6 用便宜模型，therapist 用质量好的模型
+    model_triage: str = ""       # 分诊（每轮跑，便宜）
+    model_k6: str = ""           # K6 评分（中档）
+    model_therapist: str = ""    # 治疗师回复（质量优先）
+
     # 每个筛查维度最少对话轮数（聊够才推进到下一个维度）
     min_turns_per_screening: int = 5
 
