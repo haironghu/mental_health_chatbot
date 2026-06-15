@@ -19,11 +19,12 @@ from dataclasses import dataclass, field
 
 from app.agents.base import AgentContext
 from app.agents.k6_scorer_agent import K6ScorerAgent
+from app.agents.safety_monitor import SafetyMonitorAgent
 from app.agents.therapist import TherapistAgent
 from app.agents.triage import TriageAgent
 from app.config import settings
 from app.orchestrator.fsm import PM_STRATEGY_STATES, SessionFSM, SessionState
-from app.safety import k6_scorer, risk_monitor
+from app.safety import crisis_keywords, k6_scorer, risk_monitor
 
 logger = logging.getLogger(__name__)
 
@@ -38,6 +39,7 @@ class CoordinatorResult:
 class Coordinator:
     def __init__(self):
         self.triage = TriageAgent()
+        self.safety = SafetyMonitorAgent()
         self.k6_scorer_agent = K6ScorerAgent()
         self.therapist = TherapistAgent()
 
@@ -71,15 +73,26 @@ class Coordinator:
         k6_dim_scores = analysis.get("k6_dim_scores") or {}
         k6_scorer.update_scores(session, k6_dim_scores)
 
-        # ── 4. FSM 状态决策（确定性） ───────────────────────────────
-        if risk_monitor.should_force_crisis(risk) or analysis.get("crisis_detected"):
+        # ── 4. 三重危机判定（任一命中即强制危机干预） ───────────────
+        # ① Safety Monitor LLM 判断 ② 确定性关键词兜底 ③ R(t) 红色
+        kw_hit = crisis_keywords.contains_crisis_keywords(user_message)
+        crisis = (
+            bool(analysis.get("crisis_detected"))
+            or kw_hit
+            or risk_monitor.should_force_crisis(risk)
+        )
+        if kw_hit:
+            trace["crisis_keyword_hit"] = crisis_keywords.matched_keywords(user_message)
+
+        # ── 5. FSM 状态决策（确定性） ───────────────────────────────
+        if crisis:
             fsm.force_crisis()
         elif fsm.state == SessionState.CLOSURE:
             fsm.closure_done = True
         else:
             self._advance_fsm(fsm, session, analysis)
 
-        # ── 5. 准备回复上下文 ───────────────────────────────────────
+        # ── 6. 准备回复上下文 ───────────────────────────────────────
         ctx.fsm_state = fsm.state.value
         ctx.alert_level = risk.level.value
         ctx.stabilize = risk_monitor.should_stabilize(session, risk)
@@ -89,7 +102,7 @@ class Coordinator:
         ctx.pm_strategies_used = fsm.pm_strategies_used
         ctx.remaining_strategies = _remaining_pm_strategies(fsm.pm_strategies_used)
 
-        # ── 6. 运行 TherapistAgent ──────────────────────────────────
+        # ── 7. 运行 TherapistAgent ──────────────────────────────────
         t0 = time.monotonic()
         response_text = self.therapist.respond(ctx)
         trace["therapist_ms"] = round((time.monotonic() - t0) * 1000)
@@ -108,8 +121,8 @@ class Coordinator:
         self, ctx: AgentContext, fsm: SessionFSM, trace: dict
     ) -> dict:
         """并行运行分析 Agent，合并结果。"""
-        # 决定本轮要跑哪些分析 agent
-        agents = [self.triage]
+        # Triage 和 Safety 每轮都跑；K6 仅评估阶段跑
+        agents = [self.triage, self.safety]
         if fsm.state == SessionState.K6_ASSESSMENT:
             agents.append(self.k6_scorer_agent)
 
@@ -125,9 +138,13 @@ class Coordinator:
             for name, out in pool.map(_run, agents):
                 results[name] = out
 
-        # 合并：triage 提供主信号，k6_scorer 提供 k6_dim_scores
+        # 合并各 agent 信号：
+        #   triage  → s_emotion / s_behavior / language / emotion_labels / wants_to_continue
+        #   safety  → crisis_detected / s_keyword / crisis_reason
+        #   k6      → k6_dim_scores（仅 K6 阶段）
         merged: dict = {}
         merged.update(results.get("triage", self.triage.safe_default()))
+        merged.update(results.get("safety_monitor", self.safety.safe_default()))
         if "k6_scorer" in results:
             merged.update(results["k6_scorer"])
         else:

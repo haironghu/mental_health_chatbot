@@ -27,9 +27,10 @@
 ```
 app/
 ├── config.py                  # 配置（pydantic-settings）
-├── agents/                    # ★ 多 Agent 架构（Phase 1）
+├── agents/                    # ★ 多 Agent 架构（Phase 1-2）
 │   ├── base.py                # Agent 基类 + AgentContext
-│   ├── triage.py             # 分诊 Agent（R(t) 信号 + 危机 + 语言 + 意愿）
+│   ├── triage.py             # 分诊 Agent（情绪/行为信号 + 语言 + 意愿）
+│   ├── safety_monitor.py     # 安全监测 Agent（危机/自伤/自杀检测）
 │   ├── k6_scorer_agent.py    # K6 评分 Agent（仅 K6 阶段运行）
 │   ├── therapist.py          # 治疗师 Agent（自然语言回复）
 │   └── coordinator.py        # 协调器（并行调度 + 确定性决策）
@@ -52,20 +53,21 @@ app/
 tools/
 ├── k6_query.py                # 查询单用户 K6 评分
 └── k6_export.py               # 批量导出 K6 评分到 CSV
-tests/                         # 137 项单元测试
+tests/                         # 146 项单元测试
 ```
 
-## 多 Agent 架构（Phase 1）
+## 多 Agent 架构（Phase 1-2）
 
 ```
 orchestrator.process()           # 会话生命周期
    └─> Coordinator.run()         # hub-and-spoke 调度
-         ├─ 并行: TriageAgent + K6ScorerAgent（仅 K6 阶段）
+         ├─ 并行: TriageAgent + SafetyMonitorAgent + K6ScorerAgent（仅 K6 阶段）
+         ├─ 三重危机判定: Safety LLM / 确定性关键词兜底 / R(t) 红色
          ├─ 确定性: R(t) 更新 / K6 更新 / FSM 决策 / 危机强制
          └─ TherapistAgent（生成回复）
 ```
 
-设计原则、各 Agent 职责、后续 Phase 2-5 路线图详见 [docs/MULTI_AGENT_DESIGN.md](docs/MULTI_AGENT_DESIGN.md)。
+设计原则、各 Agent 职责、后续 Phase 3-5 路线图详见 [docs/MULTI_AGENT_DESIGN.md](docs/MULTI_AGENT_DESIGN.md)。
 
 ## 快速开始
 

@@ -54,6 +54,16 @@ def build_k6_prompt(user_message: str, history: list[dict]) -> tuple[str, list[d
     return system, messages
 
 
+def build_safety_prompt(user_message: str, history: list[dict]) -> tuple[str, list[dict]]:
+    """
+    构造安全监测 Prompt（SafetyMonitorAgent 用）：危机检测。
+    返回 (system_text, messages)。
+    """
+    system = _render("agents/safety_monitor.jinja2", user_message=user_message, history=history)
+    messages = [{"role": "user", "content": user_message}]
+    return system, messages
+
+
 def build_response_prompt(
     state: SessionState,
     history: list[dict],

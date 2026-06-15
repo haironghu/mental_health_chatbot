@@ -97,7 +97,7 @@ class Coordinator:
         ↓
 Phase 1 ✅：拆出 Triage + K6 Scorer（把 Analysis 拆开），建立 Agent 框架 + Coordinator
         ↓
-Phase 2：加 Safety Monitor（并行运行）
+Phase 2 ✅：加 Safety Monitor（并行运行）+ 确定性关键词兜底 + 三重危机判定
         ↓
 Phase 3：Therapist 按状态拆成多个专家
         （k6_interview / stress / problem / activation / social / crisis / closure）
@@ -122,7 +122,22 @@ app/agents/
 - K6ScorerAgent 仅在 K6_ASSESSMENT 状态运行，省成本
 - 每个 Agent 失败时返回安全默认值，不拖垮流水线
 - Coordinator 输出 `trace`（各 Agent 耗时），写入日志供观测
-- 各 Agent 模型档位可在 `.env` 配置（MODEL_TRIAGE / MODEL_K6 / MODEL_THERAPIST）
+- 各 Agent 模型档位可在 `.env` 配置（MODEL_TRIAGE / MODEL_SAFETY / MODEL_K6 / MODEL_THERAPIST）
+
+### Phase 2 已实现（Safety Monitor）
+
+```
+app/agents/safety_monitor.py    # 专注危机/自伤/自杀意念检测（每轮并行）
+app/safety/crisis_keywords.py   # 确定性危机关键词兜底（粤/普/英）
+```
+
+- **职责分离**：危机检测从 TriageAgent 分离到独立的 SafetyMonitorAgent，
+  专注的 prompt 比混在分诊里更可靠；s_keyword 也随之移到 safety
+- **三重危机判定**（任一命中即强制危机干预，冗余保障安全）：
+  1. SafetyMonitorAgent 的 LLM 判断（crisis_detected）
+  2. 确定性关键词兜底（contains_crisis_keywords）—— LLM 失败也能 catch 明显危机
+  3. R(t) 红色预警
+- 关键词命中会写入 trace（crisis_keyword_hit）供审计
 
 ## 可观测性（必做）
 

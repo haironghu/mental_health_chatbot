@@ -4,6 +4,7 @@ from unittest.mock import patch
 from app.agents.base import AgentContext
 from app.agents.coordinator import Coordinator, _map_language
 from app.agents.k6_scorer_agent import K6ScorerAgent
+from app.agents.safety_monitor import SafetyMonitorAgent
 from app.agents.therapist import TherapistAgent
 from app.agents.triage import TriageAgent
 from app.orchestrator.fsm import SessionFSM, SessionState
@@ -25,22 +26,24 @@ class TestTriageAgent:
     @patch("app.intelligence.llm.complete_json")
     def test_returns_merged_signals(self, mock_json, default_session):
         mock_json.return_value = {
-            "s_emotion": 40, "crisis_detected": False, "language": "cantonese",
+            "s_emotion": 40, "s_behavior": 10, "language": "cantonese",
         }
         agent = TriageAgent()
         out = agent.analyze(_ctx(default_session))
         assert out["s_emotion"] == 40
         # 缺失字段由安全默认补全
-        assert "s_keyword" in out
+        assert "s_behavior" in out
         assert "wants_to_continue" in out
+        # 危机信号已移到 safety，triage 不再输出
+        assert "crisis_detected" not in agent.safe_default()
 
     @patch("app.intelligence.llm.complete_json")
     def test_failure_returns_safe_default(self, mock_json, default_session):
         mock_json.side_effect = Exception("boom")
         agent = TriageAgent()
         out = agent.analyze(_ctx(default_session))
-        assert out["crisis_detected"] is False
         assert out["s_emotion"] == 0.0
+        assert out["s_behavior"] == 0.0
 
 
 # ── K6ScorerAgent ────────────────────────────────────────────────
@@ -64,6 +67,66 @@ class TestK6ScorerAgent:
         agent = K6ScorerAgent()
         out = agent.analyze(_ctx(default_session))
         assert all(v == 0 for v in out["k6_dim_scores"].values())
+
+
+# ── SafetyMonitorAgent ───────────────────────────────────────────
+
+
+class TestSafetyMonitorAgent:
+    @patch("app.intelligence.llm.complete_json")
+    def test_detects_crisis(self, mock_json, default_session):
+        mock_json.return_value = {
+            "crisis_detected": True, "s_keyword": 90, "crisis_reason": "自殺意念",
+        }
+        agent = SafetyMonitorAgent()
+        out = agent.analyze(_ctx(default_session))
+        assert out["crisis_detected"] is True
+        assert out["s_keyword"] == 90
+
+    @patch("app.intelligence.llm.complete_json")
+    def test_no_crisis(self, mock_json, default_session):
+        mock_json.return_value = {
+            "crisis_detected": False, "s_keyword": 0, "crisis_reason": "",
+        }
+        agent = SafetyMonitorAgent()
+        out = agent.analyze(_ctx(default_session))
+        assert out["crisis_detected"] is False
+
+    @patch("app.intelligence.llm.complete_json")
+    def test_failure_defaults_to_no_crisis(self, mock_json, default_session):
+        # LLM 失败时 default False，但 Coordinator 有关键词兜底
+        mock_json.side_effect = Exception("boom")
+        agent = SafetyMonitorAgent()
+        out = agent.analyze(_ctx(default_session))
+        assert out["crisis_detected"] is False
+        assert out["s_keyword"] == 0.0
+
+
+# ── 确定性危机关键词兜底 ─────────────────────────────────────────
+
+
+class TestCrisisKeywords:
+    def test_detects_chinese_crisis(self):
+        from app.safety.crisis_keywords import contains_crisis_keywords
+        assert contains_crisis_keywords("我想死")
+        assert contains_crisis_keywords("唔想再活落去喇")
+        assert contains_crisis_keywords("想自殘")
+
+    def test_detects_english_crisis(self):
+        from app.safety.crisis_keywords import contains_crisis_keywords
+        assert contains_crisis_keywords("I want to die")
+        assert contains_crisis_keywords("I want to KILL MYSELF")  # 大小写不敏感
+
+    def test_ignores_normal_negative(self):
+        from app.safety.crisis_keywords import contains_crisis_keywords
+        assert not contains_crisis_keywords("我今日好唔開心")
+        assert not contains_crisis_keywords("學業壓力好大")
+        assert not contains_crisis_keywords("")
+
+    def test_matched_keywords_returns_list(self):
+        from app.safety.crisis_keywords import matched_keywords
+        hits = matched_keywords("我想死")
+        assert "想死" in hits
 
 
 # ── TherapistAgent ───────────────────────────────────────────────
@@ -186,9 +249,28 @@ class TestCoordinatorRun:
         result = coord.run(default_session, fsm, "你好", history=[])
 
         assert result.response_text == "你好呀 😊"
-        # trace 应记录 triage 和 therapist 的耗时
+        # trace 应记录各 agent 的耗时
         assert "triage_ms" in result.trace
+        assert "safety_monitor_ms" in result.trace
         assert "therapist_ms" in result.trace
+
+    @patch("app.intelligence.llm.complete")
+    @patch("app.intelligence.llm.complete_json")
+    def test_keyword_fallback_forces_crisis(self, mock_json, mock_complete, default_session):
+        """Safety LLM 说无危机，但确定性关键词命中 → 仍强制危机。"""
+        def fake_json(messages, *, system="", model=None):
+            if "K6 凱斯勒" in system:
+                return {"tense": 0, "helpless": 0, "restless": 0,
+                        "depressed": 0, "effortful": 0, "worthless": 0}
+            return dict(_BASE)  # safety: crisis_detected=False
+        mock_json.side_effect = fake_json
+        mock_complete.return_value = "我好擔心你"
+
+        coord = Coordinator()
+        fsm = SessionFSM(default_session)
+        result = coord.run(default_session, fsm, "我想死", history=[])
+        assert fsm.state == SessionState.CRISIS_INTERVENTION
+        assert "crisis_keyword_hit" in result.trace
 
     @patch("app.intelligence.llm.complete")
     @patch("app.intelligence.llm.complete_json")

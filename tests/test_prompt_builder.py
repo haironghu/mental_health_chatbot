@@ -34,15 +34,15 @@ class TestBuildTriagePrompt:
     def test_system_contains_triage_signals(self):
         system, _ = build_triage_prompt("test", history=[])
         assert "s_emotion" in system
-        assert "s_keyword" in system
         assert "s_behavior" in system
-        assert "crisis_detected" in system
         assert "wants_to_continue" in system
 
-    def test_triage_does_not_contain_k6(self):
-        # 分诊 prompt 不应包含 K6 评分细节（已拆分）
+    def test_triage_does_not_contain_k6_or_crisis(self):
+        # 分诊 prompt 不应包含 K6 评分（在 k6_scoring）或危机检测（在 safety_monitor）
         system, _ = build_triage_prompt("test", history=[])
         assert "k6_dim_scores" not in system
+        assert "s_keyword" not in system
+        assert "crisis_detected" not in system
 
     def test_history_included(self):
         history = [

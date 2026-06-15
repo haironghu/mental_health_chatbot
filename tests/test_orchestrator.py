@@ -9,15 +9,20 @@ from unittest.mock import patch
 from app.orchestrator.orchestrator import process
 
 
-# Triage agent 的 JSON 输出（中性、低风险）
+# Triage agent 的 JSON 输出（中性、低风险）。危机信号已移到 safety。
 _TRIAGE_OUT = {
     "s_emotion": 20,
-    "s_keyword": 0,
     "s_behavior": 5,
     "language": "cantonese",
     "emotion_labels": ["neutral"],
-    "crisis_detected": False,
     "wants_to_continue": None,
+}
+
+# Safety monitor 的 JSON 输出（无危机）
+_SAFETY_OUT = {
+    "crisis_detected": False,
+    "s_keyword": 0,
+    "crisis_reason": "",
 }
 
 # K6 agent 的 JSON 输出（全 0）
@@ -27,17 +32,22 @@ _K6_OUT = {
 }
 
 
-def _make_complete_json(triage_out=None, k6_out=None):
+def _make_complete_json(triage_out=None, safety_out=None, k6_out=None):
     """
-    返回 fake complete_json：根据 system prompt 区分 triage / k6 调用。
-    K6 评分 prompt 的 system 含「K6 凱斯勒」，分诊 prompt 不含。
+    返回 fake complete_json：根据 system prompt 区分 triage / safety / k6 调用。
+    - K6 评分 prompt 含「K6 凱斯勒」
+    - 安全监测 prompt 含「安全監測」
+    - 其余为分诊
     """
     triage_out = triage_out if triage_out is not None else _TRIAGE_OUT
+    safety_out = safety_out if safety_out is not None else _SAFETY_OUT
     k6_out = k6_out if k6_out is not None else _K6_OUT
 
     def fake(messages, *, system="", model=None):
         if "K6 凱斯勒" in system:
             return dict(k6_out)
+        if "安全監測" in system:
+            return dict(safety_out)
         return dict(triage_out)
     return fake
 
@@ -60,17 +70,25 @@ class TestProcess:
     @patch("app.intelligence.llm.complete")
     @patch("app.intelligence.llm.complete_json")
     def test_crisis_detected_forces_crisis_state(self, mock_json, mock_complete, tmp_sessions_dir):
-        crisis_triage = {
-            **_TRIAGE_OUT,
-            "s_emotion": 90, "s_keyword": 95, "s_behavior": 70,
-            "crisis_detected": True,
+        # 危机信号由 Safety Monitor 提供
+        crisis_safety = {
+            "crisis_detected": True, "s_keyword": 95, "crisis_reason": "明確自殺意念",
         }
-        mock_json.side_effect = _make_complete_json(triage_out=crisis_triage)
+        mock_json.side_effect = _make_complete_json(safety_out=crisis_safety)
         mock_complete.return_value = "我好擔心你，你而家安全嗎？"
 
-        result = process("+85299990002", "我唔想活了")
+        result = process("+85299990002", "我覺得好difficult")  # 不含确定性关键词，纯靠 LLM
         assert result.state == "crisis_intervention"
-        assert result.alert_level in ("orange", "red")
+
+    @patch("app.intelligence.llm.complete")
+    @patch("app.intelligence.llm.complete_json")
+    def test_crisis_keyword_fallback(self, mock_json, mock_complete, tmp_sessions_dir):
+        """即使 Safety LLM 漏判，确定性关键词也应触发危机。"""
+        mock_json.side_effect = _make_complete_json()  # safety 说无危机
+        mock_complete.return_value = "我好擔心你"
+
+        result = process("+85299990007", "我想死")  # 命中确定性关键词
+        assert result.state == "crisis_intervention"
 
     @patch("app.intelligence.llm.complete")
     @patch("app.intelligence.llm.complete_json")

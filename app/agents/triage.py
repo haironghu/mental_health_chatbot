@@ -1,8 +1,9 @@
 """
 TriageAgent（分诊 Agent）。
 
-职责：每轮运行，从用户消息中提取实时风险信号（R(t) 用）、危机标志、语言、用户意愿。
-特点：安全关键 + 高频，使用便宜模型。失败时返回安全默认值（全 0、无危机）。
+职责：每轮运行，从用户消息中提取情绪/行为风险信号（R(t) 用）、语言、用户意愿。
+危机/自杀意念检测已分离到 SafetyMonitorAgent（Phase 2）。
+特点：高频，使用便宜模型。失败时返回安全默认值（全 0）。
 """
 import logging
 
@@ -22,9 +23,7 @@ class TriageAgent(AnalysisAgent):
     def safe_default(self) -> dict:
         return {
             "s_emotion": 0.0,
-            "s_keyword": 0.0,
             "s_behavior": 0.0,
-            "crisis_detected": False,
             "language": "cantonese",
             "emotion_labels": [],
             "wants_to_continue": None,
